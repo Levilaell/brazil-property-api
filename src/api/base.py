@@ -18,13 +18,56 @@ logger = logging.getLogger(__name__)
 def create_app(testing=False):
     app = Flask(__name__)
     
-    # Load configuration
-    if testing:
-        app.config['TESTING'] = True
-        app.config.from_object('src.config.settings.TestingConfig')
-    else:
-        app.config['TESTING'] = False
-        app.config.from_object('src.config.settings.Config')
+    # Load configuration - Direct approach for containers
+    app.config['TESTING'] = testing
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key')
+    app.config['MONGODB_URL'] = os.environ.get('MONGODB_URL', 'mongodb://localhost:27017/test')
+    app.config['REDIS_URL'] = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    app.config['DEBUG'] = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    # Create a simple config object with required methods
+    class SimpleConfig:
+        def __init__(self):
+            self.MONGODB_URL = os.environ.get('MONGODB_URL', 'mongodb://localhost:27017/test')
+            self.REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+            self.SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key')
+            self.CACHE_TTL = int(os.environ.get('CACHE_TTL', '300'))
+            
+        def get_redis_host(self):
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(self.REDIS_URL)
+                return parsed.hostname or 'localhost'
+            except:
+                return 'localhost'
+                
+        def get_redis_port(self):
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(self.REDIS_URL)
+                return parsed.port or 6379
+            except:
+                return 6379
+                
+        def get_redis_db(self):
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(self.REDIS_URL)
+                path = parsed.path.strip('/')
+                return int(path) if path.isdigit() else 0
+            except:
+                return 0
+                
+        def get_database_name(self):
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(self.MONGODB_URL)
+                return parsed.path.lstrip('/') or 'brazil_property_dev'
+            except:
+                return 'brazil_property_dev'
+    
+    # Store config object for components that need it
+    app.config_obj = SimpleConfig()
     
     # Setup components
     configure_cors(app)
