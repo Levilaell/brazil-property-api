@@ -189,9 +189,11 @@ class MongoDBHandler:
         Returns:
             True if successful, False otherwise
         """
+        start_time = time.time()
         try:
             # Validate property data
             if not self._validate_property_data(property_data):
+                self._record_db_operation('insert', 'properties', time.time() - start_time, success=False)
                 return False
             
             # Add metadata
@@ -202,10 +204,13 @@ class MongoDBHandler:
             collection = self.get_collection('properties')
             result = collection.insert_one(property_data)
             
-            return bool(result.inserted_id)
+            success = bool(result.inserted_id)
+            self._record_db_operation('insert', 'properties', time.time() - start_time, success=success)
+            return success
             
         except Exception as e:
             logger.error(f"Error saving property: {e}")
+            self._record_db_operation('insert', 'properties', time.time() - start_time, success=False)
             return False
     
     def save_properties(self, properties: List[Dict[str, Any]]) -> bool:
@@ -759,3 +764,14 @@ class MongoDBHandler:
         except Exception as e:
             logger.error(f"Error validating property data: {e}")
             return False
+    
+    def _record_db_operation(self, operation: str, collection: str, duration: float, success: bool = True):
+        """Record database operation in metrics collector if available."""
+        try:
+            # Try to get Flask app and metrics collector
+            from flask import current_app
+            if hasattr(current_app, 'metrics_collector'):
+                current_app.metrics_collector.record_db_operation(operation, collection, duration, success=success)
+        except Exception:
+            # Ignore if Flask context is not available or metrics collector not set
+            pass

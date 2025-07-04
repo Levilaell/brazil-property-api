@@ -9,6 +9,7 @@ import os
 from src.config.settings import Config
 from src.api.exceptions import ValidationError, DatabaseError
 from src.security import SecurityMiddleware
+from src.analytics import Analytics, MetricsCollector, HealthChecker
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ def create_app(testing=False):
     # Setup components
     configure_cors(app)
     setup_security(app)
+    setup_analytics(app)
     setup_error_handlers(app)
     setup_logging(app)
     register_blueprints(app)
@@ -79,6 +81,34 @@ def setup_security(app):
     # Initialize security middleware
     security_middleware = SecurityMiddleware(app)
     app.security_middleware = security_middleware
+
+
+def setup_analytics(app):
+    """Setup analytics and monitoring systems."""
+    # Default analytics configuration
+    default_analytics_config = {
+        'ANALYTICS_ENABLED': True,
+        'ANALYTICS_STORAGE': 'memory',
+        'ANALYTICS_BATCH_SIZE': 100,
+        'ANALYTICS_FLUSH_INTERVAL': 300,  # 5 minutes
+        'METRICS_ENABLED': True,
+        'METRICS_STORAGE': 'memory',
+        'METRICS_RETENTION_DAYS': 30,
+        'HEALTH_CHECK_ENABLED': True,
+        'HEALTH_CHECK_TIMEOUT': 5,
+        'HEALTH_CHECK_CACHE_TTL': 60,
+        'HEALTH_CHECK_COMPONENTS': ['database', 'cache', 'external_services']
+    }
+    
+    # Update app config with analytics defaults if not set
+    for key, value in default_analytics_config.items():
+        if key not in app.config:
+            app.config[key] = value
+    
+    # Initialize analytics systems
+    app.analytics = Analytics(app.config)
+    app.metrics_collector = MetricsCollector(app.config)
+    app.health_checker = HealthChecker(app.config)
 
 
 def setup_error_handlers(app):
@@ -169,10 +199,38 @@ def setup_request_handlers(app):
     
     @app.after_request
     def after_request(response):
-        # Add response time header
+        # Calculate response time
+        response_time = 0
         if hasattr(request, 'start_time'):
             response_time = time.time() - request.start_time
             response.headers['X-Response-Time'] = f"{response_time:.3f}s"
+        
+        # Track analytics if available
+        if hasattr(app, 'analytics') and hasattr(app, 'metrics_collector'):
+            try:
+                endpoint = request.endpoint or request.path
+                method = request.method
+                status_code = response.status_code
+                user_ip = request.remote_addr
+                user_agent = request.headers.get('User-Agent', '')
+                
+                # Track request in analytics
+                app.analytics.track_request(
+                    endpoint=endpoint,
+                    method=method,
+                    status_code=status_code,
+                    response_time=response_time,
+                    user_ip=user_ip,
+                    user_agent=user_agent
+                )
+                
+                # Track metrics
+                app.metrics_collector.record_response_time(endpoint, response_time)
+                app.metrics_collector.record_endpoint_usage(endpoint, method, status_code=status_code)
+                
+            except Exception as e:
+                # Don't let analytics errors break the response
+                logger.error(f"Analytics tracking error: {e}")
         
         # Ensure JSON responses
         if response.content_type == 'application/json':
